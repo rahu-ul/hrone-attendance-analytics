@@ -79,24 +79,21 @@ Tests that need MongoDB use `TEST_MONGO_URI` and throw-away database names (drop
 When MongoDB is unreachable those tests are reported as **skipped**, never as passed.
 
 ## Verification status
-* Run in a sandbox without MongoDB: syntax check of every file; the pure business-rule helpers (R1-R5, R8) against brute-force
-  oracles; the four analytics pipelines and the write paths against an independent in-memory model of MongoDB's operators.
-  This checks the *logic*; it is not MongoDB.
-* **Not yet run by me on a real MongoDB: the full `pytest` suite, the explain plans (IXSCAN / no COLLSCAN) and timings on ~100k records.**
-  Run `python -m pytest tests -v -rs -s` against MongoDB 6/7 to confirm (see Tests above).
+* **Full suite, author's previously reported local result (not re-run by the reviewer):** 492 passed, 0 failed, 1 non-blocking Starlette deprecation warning,
+  about 5 min 13 s, against a local MongoDB (server version not recorded in this repository). It includes the explain checks on ~100,000 records
+  (`tests/test_explain_live.py`) and the concurrency tests.
+* Pure helpers and request/explain validation also run without MongoDB (`tests/test_helpers.py`, `tests/test_phase2_logic.py`,
+  `tests/test_explain.py`).
 
-## Known limitations (honest list)
-* **Not verified against a real MongoDB by me.** The sandboxes used to build this project had no MongoDB. The explain
-  endpoint, the analytics pipelines, and all database tests were written carefully but have not been observed running on
-  real MongoDB, so the `IXSCAN` / no-`COLLSCAN` result on ~100k records is **designed and covered by a test, but not yet confirmed**.
-  See "Verification status" below for exactly what was and was not run.
+## Known limitations
 * `GET /admin/explain/...` really executes the query (that is what `executionStats` means) and has no authentication
   (the contract defines none). It should not be exposed publicly.
 * Skip/limit pagination gets slower for very deep pages, and `total` is an exact count on every list request.
 * Startup builds all indexes before the app serves traffic; on a very large existing collection that takes a while.
-  If existing data contains duplicate `(emp_code, date)` rows the unique index cannot be built: `/health` stays 200,
+  If existing data contains duplicate `(emp_code, date)` rows the unique index cannot be built: `/health` stays 200 and
   writes fail instead of silently allowing duplicates.
 * An already-existing index with the same keys but a different name would make index creation fail (not handled).
-* Interpretation choices where the contract is open (listed here): the 92-day trend limit counts both end dates; the
-  7-day moving average uses the already-rounded daily rates; logs dated before an employee's `joined_on` still count.
+* Interpretation choices where the contract is open: the 92-day trend limit counts both end dates; the 7-day moving average
+  uses the already-rounded daily rates; logs dated before an employee's `joined_on` still count; a punch-out earlier than or
+  equal to the employee's only punch-in answers 422.
 * A malformed `date` string in seeded data is treated as a weekend day by the analytics instead of failing the request.

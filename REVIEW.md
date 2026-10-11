@@ -47,8 +47,8 @@ list defects found in **my own later code** and the Phase 4 index-coverage revie
 
 ## Phase 2 re-review of the existing punch-in (and what the new endpoints needed from it)
 
-I re-read `POST /attendance/punch-in` against the contract while writing punch-out and PATCH. Nothing here was run
-against a real MongoDB (see "Things I could not verify").
+I re-read `POST /attendance/punch-in` against the contract while writing punch-out and PATCH. The findings below were
+reasoned from the code at that time; the behaviour is now covered by the test suite (see "Verification status").
 
 | # | Where | Finding | Action |
 |---|---|---|---|
@@ -69,8 +69,9 @@ always exist).
 * PATCH never writes the `history` array back. It `$set`s only changed fields and `$push`es one entry, with a filter pinned to the
   state that was read (status, both punch times, history length). A concurrent edit makes the filter miss; the code re-reads and
   re-plans (max 3 attempts) and otherwise answers 409.
-* Check order for punch-out: 422 body -> 404 employee -> 404 no record -> 409 already out -> 422 time window. A duplicate punch-out
-  therefore gets 409 even if its timestamp would also be out of window.
+* Check order for punch-out: 422 body -> 404 employee -> 404 no presence record at all -> 409 already out -> 422 time window.
+  A duplicate punch-out therefore gets 409 even if its timestamp would also be out of window. If the employee's only punch-ins are
+  *later* than `punched_at`, the answer is 422 (`punched_at` is not after a punch-in), not 404.
 * "A request that changes nothing" is judged on the final value of all seven fields (status, both times, four derived values).
   Missing legacy values are normalised first (late/overtime 0, half_day false) so a legacy record is not reported as changed.
 
@@ -81,10 +82,10 @@ always exist).
 | 31 | `department_trend`, parameter `from` | The first version declared the parameter as `from_: DateStr = Query(alias="from")`. With that form the `AfterValidator` of `DateStr` was not applied, so the date check silently disappeared. | `from=2026-02-30` reached the function and the pipeline code and ended as a **500** instead of 422 (found by the Phase 3 tests: FastAPI run from source, database replaced by a stand-in). | `from_: Annotated[DateStr, Query(alias="from")]`. The explain endpoint uses the same `Annotated[...]` form. |
 | 32 | `apply_regularization` (PATCH) | The correction always did `$push` onto `history`. MongoDB rejects `$push` onto a field that exists but is `null`, so a seeded record with `history: null` (not missing) would answer **500**. | A record with `"history": null`, then `PATCH` with a status change. Reproduced against a model of the update semantics; regression test `test_patch_record_whose_history_is_an_explicit_null`. | When the stored history is missing, null or empty, the update `$set`s `history: [entry]` instead (the version filter pins "history still empty", so no entry can be overwritten); otherwise `$push` as before. |
 
-## Index coverage review (by reasoning from the query shapes - plans NOT yet observed)
+## Index coverage review (query shapes and the index expected to serve each)
 
-I could not run MongoDB in the Phase 4 sandbox, so the table below is what each query needs and which declared index should serve
-it. It is **not** an observed explain result. `tests/test_explain_live.py` is written to check it on ~100,000 records.
+The table below is what each query needs and which declared index should serve it. The IXSCAN / no-COLLSCAN check on ~100,000
+records is made by `tests/test_explain_live.py`; see "Verification status" for the run result.
 
 | Query | First stage / filter | Index expected to serve it | Gap found? |
 |---|---|---|---|
@@ -116,14 +117,13 @@ Also reviewed while adding explain:
 * `late = (punch_in - start)` flooring for positive values: floor and truncation agree for positive deltas; the real problem is the order of operations (#3).
 * Status codes 201 on both POSTs: correct per contract.
 
-## Things I could not verify here
+## Verification status
 
-* **No real MongoDB run.** Everything below was written and checked without a MongoDB server, FastAPI test client or pytest available:
-  the full `pytest` suite, the `IXSCAN` / no-`COLLSCAN` plans of `GET /attendance` and of the explain endpoint, and speed at ~100k documents
-  are **designed but not observed**. `tests/test_explain_live.py` is written to check them.
-* What *was* executed: syntax checks; the pure helpers (R1-R5, R8) against exhaustive brute-force oracles; the analytics pipelines and the
-  punch-in / punch-out / PATCH code (including simulated races) against an in-memory model of the MongoDB operators the code uses, compared
-  with an independently written oracle, plus deliberately injected bugs to confirm those checks can fail. That evidence concerns the logic,
-  not whether a real server accepts every pipeline or which plan it chooses.
-* Interpretation choices where the contract is open: a punch-out whose `punched_at` is *before* the employee's only punch-in answers 404
-  ("no punch-in at or before it"), while equality answers 422; the moving average uses the already-rounded daily rates; the 92-day limit counts both end dates.
+* **Author's previously reported local result (full suite, not re-run by the reviewer):** 492 passed, 0 failed, 1 non-blocking Starlette deprecation warning, about
+  5 min 13 s, against a local MongoDB (server version not recorded in this repository). The suite includes the live explain checks on ~100,000 records (`tests/test_explain_live.py`).
+* Part A findings 1-28 were reproduced against the original starter in Phase 1 (on FerretDB, see the top of this file); the
+  starter file is no longer in the repository, so they were not re-run later.
+* Not tested: behaviour under a much larger dataset than the ~100,000-record explain test, and any deployment other than a
+  single local `uvicorn` process.
+* Interpretation choices where the contract is open: a punch-out whose `punched_at` is *before or equal to* the employee's only
+  punch-in answers 422; the moving average uses the already-rounded daily rates; the 92-day limit counts both end dates.

@@ -119,6 +119,20 @@ def test_punch_out_before_punch_in_is_422(client, clean):
     assert pout(client, at=ist_ms(2026, 7, 6, 8, 0)).status_code == 422
 
 
+def test_punch_out_earlier_than_the_only_punch_in_is_422_not_404(client, clean):
+    """Contract: 422 if punched_at <= punch_in; 404 is only for 'no punch-in found'.
+    Here the employee's ONLY punch-in is on a later calendar day than the requested punch-out,
+    so the '<= punched_at' lookup finds nothing, yet the answer must still be 422 (not 404),
+    and the record must stay open with no history."""
+    make_emp(client)
+    assert pin(client, at=ist_ms(2026, 7, 6, 9, 0)).status_code == 201
+    r = pout(client, at=ist_ms(2026, 7, 5, 18, 0))  # the evening BEFORE the only punch-in
+    assert r.status_code == 422
+    assert isinstance(r.json()["detail"], list)
+    stored = main.attendance_col().find_one({"emp_code": "EMP0001"})
+    assert stored["punch_out"] is None and stored["history"] == []
+
+
 def test_punch_out_absent_and_leave_records_are_not_matched(client, clean):
     make_emp(client)
     main.attendance_col().insert_many([

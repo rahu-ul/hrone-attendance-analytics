@@ -1,6 +1,6 @@
 # DECISIONS
 
-1. **Indexes.** Employees: unique `emp_code`, `(department, emp_code)`, `joined_on`. Attendance: unique `(emp_code, date)`, `(date desc, emp_code)`, `(status, date desc, emp_code)`, `(emp_code, punch_in desc)`. Each one serves a filter plus its sort order, or a uniqueness guarantee. I rejected a lone `status` index: few distinct values, and it cannot give the sort.
+1. **Indexes.** Employees: unique `emp_code`, `(department, emp_code)`, `joined_on`. Attendance: unique `(emp_code, date)`, `(date desc, emp_code)`, `(status, date desc, emp_code)`, `(emp_code, status, date desc)`, `(emp_code, punch_in desc)`. Each one serves a filter plus its sort order, or a uniqueness guarantee. I rejected a lone `status` index: few distinct values, and it cannot give the sort.
 
 2. **Identical punch-ins.** Both requests try to insert. The unique `(emp_code, date)` index lets one succeed (201) and rejects the other with a duplicate-key error, which becomes 409. I never check first whether a record exists.
 
